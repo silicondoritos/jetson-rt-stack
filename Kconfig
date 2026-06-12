@@ -1,0 +1,261 @@
+mainmenu "Jetson AV Firmware Configuration"
+
+# =============================================================================
+# Kernel
+# =============================================================================
+
+menu "Kernel"
+
+choice
+    prompt "Preemption model"
+    default KERNEL_PREEMPT_RT
+
+config KERNEL_PREEMPT_RT
+    bool "PREEMPT_RT (full real-time, deterministic latency)"
+    help
+      PREEMPT_RT patch set. Required for sub-100µs jitter on isolated
+      cores. Enables generic_rt_build.sh and injects CONFIG_PREEMPT_RT=y
+      into the kernel defconfig.
+
+config KERNEL_PREEMPT
+    bool "PREEMPT (voluntary, stock JetPack default)"
+    help
+      Stock NVIDIA L4T preemption. No latency guarantees. Useful for
+      debug builds or non-RT workloads.
+
+config KERNEL_PREEMPT_DYNAMIC
+    bool "PREEMPT_DYNAMIC (runtime-switchable via /sys)"
+
+endchoice
+
+config LOW_JITTER
+    bool "Low-jitter CPU isolation suite"
+    depends on KERNEL_PREEMPT_RT
+    default y
+    help
+      Injects NO_HZ_FULL, isolcpus, rcu_nocbs, irqaffinity=0 into the
+      kernel defconfig and extlinux.conf boot args. Disabling gives you
+      PREEMPT_RT without core isolation   useful for benchmarking.
+
+config ISOLATED_CORE_RANGE
+    string "Isolated core range"
+    depends on LOW_JITTER
+    default "1-5"
+    help
+      CPU cores to isolate from the OS scheduler. Injected as
+      nohz_full=N-M isolcpus=N-M rcu_nocbs=N-M in extlinux.conf.
+      Leave core 0 for the OS. Must match your carrier topology.
+
+config CMA_SIZE_MBYTES
+    int "CMA contiguous memory reservation (MiB)"
+    default 2048
+    range 512 8192
+    help
+      Injected as CONFIG_CMA_SIZE_MBYTES=N in the kernel defconfig ONLY  
+      a kernel-config fallback that in practice never wins. Deliberately
+      NOT injected as a cma= boot argument: a cmdline cma= bypasses the
+      device-tree linux,cma pool, and large reservations fail on Orin NX,
+      leaving zero CMA and killing the GPU (see versions.env and
+      docs/TROUBLESHOOTING.md F-8). The DT pool (256 MB) governs at runtime.
+
+endmenu
+
+# =============================================================================
+# Camera
+# =============================================================================
+
+menu "Camera"
+
+choice
+    prompt "Camera hardware"
+    default CAMERA_ZEDX_MONO
+
+config CAMERA_ZEDX_MONO
+    bool "Stereolabs ZED X via ZED Link Mono (MAX9296 deserializer)"
+    help
+      ZED Link Mono capture card. Requires zedx-driver vendor tree.
+      Uses MAX9296 GMSL2 deserializer. The wrong deserializer (MAX96712)
+      produces silently corrupted depth at 30fps   no error messages.
+      See docs/DRIVERS.md for acquisition instructions.
+
+config CAMERA_ZEDX_DUO
+    bool "Stereolabs ZED X via ZED Link Duo (MAX96712 deserializer)"
+    help
+      ZED Link Duo capture card. Requires zedx-driver vendor tree.
+      See docs/DRIVERS.md for acquisition instructions.
+
+config CAMERA_NONE
+    bool "No camera / bring your own"
+    help
+      Skips all ZED X driver injection, patches, DTBO overlay, and SDK
+      staging. The zedx plugin hooks become no-ops. doctor will not
+      require the zedx-driver or zed-sdk vendor trees.
+
+endchoice
+
+config DMABUF_ZEROCOPY
+    bool "DMABUF zero-copy pipeline (ZED X → ISP → CMA → Metis)"
+    depends on CAMERA_ZEDX_MONO || CAMERA_ZEDX_DUO
+    default y
+    help
+      Enables CONFIG_SYNC_FILE, CONFIG_DMABUF_HEAPS, and related kernel
+      options for zero-copy frame hand-off from the Tegra VI/ISP to the
+      Axelera NPU. See docs/DMABUF_ZEROCOPY.md.
+      Has no effect if CAMERA_NONE is selected.
+
+endmenu
+
+# =============================================================================
+# AI Accelerator
+# =============================================================================
+
+menu "AI Accelerator"
+
+config AXELERA_METIS
+    bool "Axelera Metis M.2 PCIe AI accelerator"
+    default y
+    help
+      Enables the axelera plugin: source injection, in-tree driver
+      promotion (vermagic safety), PCIe patience patch, udev rules.
+      PCI ID: 1f9d:1100.
+      Requires axelera-driver and voyager-sdk vendor trees.
+      See docs/DRIVERS.md for acquisition instructions.
+
+config METIS_POWER_CAP_W
+    int "Metis sustained power cap (Watts)"
+    depends on AXELERA_METIS
+    default 18
+    range 5 23
+    help
+      Power limit written into the brownout guard service. This is a carrier
+      power-budget ceiling, not the Metis draw: Axelera rates the M.2 module at
+      3.5-9 W typical application power. 18 W leaves roughly 2x headroom over
+      typical max so brief inference spikes do not trip the guard.
+
+config PCIE_LINK_WAIT_MAX_RETRIES
+    int "PCIe link-training max retries"
+    depends on AXELERA_METIS
+    default 100
+    range 10 500
+    help
+      LINK_WAIT_MAX_RETRIES in pcie-designware.h. Stock L4T value is 10.
+      At -10°C off a flight battery with a brief brownout during arming,
+      50 retries is not enough for Metis to enumerate. 100 is the floor.
+
+config VOYAGER_SDK
+    bool "Axelera Voyager SDK"
+    depends on AXELERA_METIS
+    default y
+    help
+      Stages the voyager-sdk vendor tree into the rootfs at bake time
+      and installs pip wheels at first-boot.
+      Requires voyager-sdk vendor tree. See docs/DRIVERS.md.
+
+endmenu
+
+# =============================================================================
+# Power
+# =============================================================================
+
+menu "Power"
+
+choice
+    prompt "Default nvpmodel mode"
+    default NVPMODEL_MAXN_SUPER
+
+config NVPMODEL_MAXN_SUPER
+    bool "MAXN_SUPER (mode 0, uncapped, up to 157 TOPS sparse-INT8)"
+    help
+      Maximum performance profile. Available in JetPack 6.2+ on
+      Orin NX 16GB. Mode IDs in the SUPER nvpmodel table (live-verified):
+      0=MAXN_SUPER uncapped, 1=10W, 2=15W, 3=25W, 4=40W fixed.
+      Validate carrier HV rail before enabling   see
+      docs/FIELD_CONFIRM_RESULTS.md §3.6.
+
+config NVPMODEL_MAXN
+    bool "MAXN (mode 3, 25 W module budget, 100 TOPS sparse-INT8)"
+    help
+      Standard maximum performance. Safe on any P3509-class carrier.
+
+config NVPMODEL_15W
+    bool "15W (mode 2)"
+
+config NVPMODEL_10W
+    bool "10W (mode 1)"
+
+endchoice
+
+endmenu
+
+# =============================================================================
+# Application Stack
+# =============================================================================
+
+menu "Application Stack"
+
+choice
+    prompt "Isaac ROS install method"
+    default ISAAC_ROS_SOURCE
+
+config ISAAC_ROS_APT
+    bool "APT binary packages"
+    help
+      Faster when available. Run field-confirm §3.4 first to verify
+      apt coverage for your required packages.
+
+config ISAAC_ROS_SOURCE
+    bool "Build from source"
+    help
+      Always works with custom kernels. ~45 min per device.
+
+config ISAAC_ROS_NONE
+    bool "Skip Isaac ROS"
+
+endchoice
+
+endmenu
+
+# =============================================================================
+# Flight Controller
+# =============================================================================
+
+menu "Flight Controller"
+
+config FCU_MAVROS
+    bool "MAVLink / MAVROS (Pixhawk)"
+    default y
+
+config FCU_TTY
+    string "FCU serial port"
+    depends on FCU_MAVROS
+    default "/dev/ttyTHS1"
+    help
+      Pixhawk TELEM2 → Jetson UART. /dev/ttyTHS0 is the debug console  
+      do NOT use it for MAVLink (opens successfully, receives nothing).
+      Verify with `dmesg | grep tty` after first boot.
+
+config FCU_BAUD
+    int "FCU baud rate"
+    depends on FCU_MAVROS
+    default 921600
+
+endmenu
+
+# =============================================================================
+# Plugins
+# =============================================================================
+
+menu "Plugins"
+
+config PLUGIN_CUSTOM_PATH
+    string "Custom plugin directory path (optional)"
+    default ""
+    help
+      Absolute path to a directory containing plugin.sh that follows the
+      jetisvision plugin convention. See docs/CONFIGURATION.md.
+      Leave empty to disable custom plugin loading.
+
+endmenu
+
+source "plugins/zedx/Kconfig"
+source "plugins/axelera/Kconfig"

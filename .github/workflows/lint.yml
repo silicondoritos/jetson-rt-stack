@@ -1,0 +1,54 @@
+name: lint
+
+# Static checks that need no hardware and no NVIDIA tarballs.
+# Keeps the single-source-of-truth and house style honest on every push/PR.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: versions.env is the single source of truth
+        run: bash scripts/check_version_consistency.sh
+
+  docs-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no stale non-version values in docs
+        run: bash scripts/check_docs_consistency.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: ShellCheck (errors only)
+        run: |
+          set -e
+          files=$(git ls-files '*.sh' 'scripts/axrun' 'scripts/jetson-av-version')
+          # Severity error: warnings are advisory, errors fail the build.
+          shellcheck -S error -x $files
+
+  docs-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No em/en-dashes in docs (house style)
+        run: |
+          # ASCII-safe escapes: a literal dash here would be eaten by the
+          # punctuation sweep itself (that is exactly what broke this gate).
+          if grep -rIlP '\x{2013}|\x{2014}' docs README.md; then
+            echo "::error::em-dash (U+2014) or en-dash (U+2013) found above. Use a colon, period, comma, or hyphen."
+            exit 1
+          fi
+          echo "OK: no em/en-dashes."

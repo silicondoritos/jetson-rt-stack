@@ -1,0 +1,4 @@
+device_label,hostname,static_ip,notes
+uav-01,node-01,192.168.10.11,prototype unit
+uav-02,node-02,192.168.10.12,
+uav-03,node-03,,no static IP, DHCP

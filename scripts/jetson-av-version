@@ -1,0 +1,58 @@
+#!/bin/bash
+# =============================================================================
+# /usr/local/bin/jetson-av-version   print this device's AV firmware identity
+# =============================================================================
+# Installed on every Jetson at bake time. SSH in and run `jetson-av-version`
+# to learn exactly what build/commit is on the device, when it was flashed,
+# and what its fleet identity is.
+#
+# Outputs in plain text by default; --json for machine-readable.
+# =============================================================================
+set -u
+
+JSON_MODE=0
+case "${1:-}" in
+    --json) JSON_MODE=1 ;;
+    --help) echo "Usage: jetson-av-version [--json]"; exit 0 ;;
+esac
+
+BUILD=/etc/jetson-av-build.json
+PERSON=/etc/jetson-av-personalized
+KREL="$(uname -r)"
+VM=""
+[ -r /sys/module/vermagic ] && VM="$(cat /sys/module/vermagic 2>/dev/null)"
+[ -z "$VM" ] && VM="$(uname -v)"
+
+if [ "$JSON_MODE" = "1" ]; then
+    cat <<EOF
+{
+  "kernel_release": "$KREL",
+  "vermagic":       "$VM",
+  "build_manifest": $( [ -f "$BUILD" ] && cat "$BUILD" || echo '"unavailable"' ),
+  "personalized":   $( [ -f "$PERSON" ] && echo "true" || echo "false" )$([ -f "$PERSON" ] && echo ',
+  "fleet": {
+'"$(awk -F= '{printf "    \""$1"\": \""$2"\"%s\n", (NR==4?"":",")}' "$PERSON")"'
+  }')
+}
+EOF
+    exit 0
+fi
+
+echo "Jetson AV firmware   device identity"
+echo "------------------------------------"
+echo "  Kernel release : $KREL"
+echo "  Vermagic       : $VM"
+echo
+if [ -f "$BUILD" ]; then
+    echo "Build manifest:"
+    sed 's/^/  /' "$BUILD"
+else
+    echo "  (no build manifest   /etc/jetson-av-build.json missing)"
+fi
+echo
+if [ -f "$PERSON" ]; then
+    echo "Fleet identity:"
+    sed 's/^/  /' "$PERSON"
+else
+    echo "  (not personalized yet   first-boot has not run)"
+fi

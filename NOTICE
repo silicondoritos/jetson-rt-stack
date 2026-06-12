@@ -1,0 +1,87 @@
+jetson-rt-stack   Custom RT L4T R36.4.3 firmware for Jetson Orin NX 16GB
+Copyright 2026 silicondoritos
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product builds on or integrates with the following upstream projects.
+The build pipeline does NOT redistribute the proprietary components below;
+it documents how to fetch and integrate them per their own licenses.
+
+------------------------------------------------------------------------
+Direct dependencies (this repo's source / config files reference them):
+------------------------------------------------------------------------
+
+* Linux kernel 5.15.x   GPL-2.0
+  https://www.kernel.org/  (also via NVIDIA L4T public_sources.tbz2)
+
+* mavlink-router   Apache-2.0
+  https://github.com/mavlink-router/mavlink-router
+
+* ROS 2 Humble   Apache-2.0
+  https://docs.ros.org/en/humble/
+
+* NVIDIA Isaac ROS   Apache-2.0
+  https://github.com/NVIDIA-ISAAC-ROS
+
+* Nav2 (navigation2)   Apache-2.0
+  https://github.com/ros-navigation/navigation2
+
+* MAVROS   BSD-3-Clause + LGPL components
+  https://github.com/mavlink/mavros
+
+* OpenCV   Apache-2.0 (we instruct users to build from source with CUDA)
+  https://github.com/opencv/opencv
+
+* btrfs-progs   GPL-2.0
+  https://btrfs.readthedocs.io/
+
+* PREEMPT_RT patch set   GPL-2.0
+  https://wiki.linuxfoundation.org/realtime/start
+
+------------------------------------------------------------------------
+Proprietary integrations (build pipeline references; redistribution by
+the upstream owner only):
+------------------------------------------------------------------------
+
+* NVIDIA Jetson Linux R36.4.3 (BSP, sample rootfs, public sources, toolchain)
+  https://developer.nvidia.com/embedded/jetson-linux-r3643
+  Subject to the NVIDIA Software License Agreement bundled with each
+  archive. This repo's scripts download these archives but do not
+  redistribute them.
+
+* Stereolabs ZED SDK + ZED X kernel driver
+  https://www.stereolabs.com/developers/drivers
+  Operators install per Stereolabs' end-user license. The kernel driver
+  is shipped as compiled .deb by Stereolabs; building it under our
+  PREEMPT_RT kernel requires source via your business agreement with
+  Stereolabs.
+
+* Axelera Voyager SDK (axelera-rt, axelera-devkit, axdevice)
+  https://github.com/axelera-ai-hub/voyager-sdk
+  Distributed under Axelera's terms via their PyPI repository.
+
+* Rock7 RockBLOCK 9704 SDK
+  https://github.com/rock7/RockBLOCK-9704
+  See repo for license terms.
+
+* Bootlin aarch64 toolchain (gcc 11.3 / glibc 2.36 / binutils 2.39)
+  https://toolchains.bootlin.com/  (mirrored by NVIDIA at the L4T R36.4.3
+  download page)
+  GCC components GPL-3.0 with runtime exception; glibc LGPL-2.1+;
+  binutils GPL-3.0. Used as a build-time toolchain only.
+
+------------------------------------------------------------------------
+Original community work that started this project:
+------------------------------------------------------------------------
+
+* "Use the Metis M.2 on the Jetson Orin NX"   original Axelera community
+  bring-up tutorial by silicondoritos. This repository is the comprehensive
+  follow-up to that thread.
+
+* The Axelera bring-up guide and `axl-jetson.patch` shared by the
+  Axelera team in the same forum.
+
+This NOTICE file is for informational purposes only and does not modify
+the License. The Apache 2.0 attribution-preservation requirement applies
+to redistribution of THIS work, not to the upstream sources listed above
+(those carry their own licenses).

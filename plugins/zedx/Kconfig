@@ -1,0 +1,21 @@
+# ZED X plugin   sub-options, shown only when a ZED X camera is selected.
+
+if CAMERA_ZEDX_MONO || CAMERA_ZEDX_DUO
+
+config ZEDX_SDK_AUTO_INSTALL
+    bool "Auto-install ZED SDK at first-boot"
+    default y
+    help
+      Stages the ZED_SDK_Tegra_*.run installer from the zed-sdk vendor
+      tree into rootfs at bake time and runs it at first-boot with
+      --skip_drivers (kernel driver is in-tree). If no .run file is
+      present at bake time, first-boot skips SDK installation silently.
+
+config ZEDX_DTBO_NAME
+    string "ZED X overlay DTBO filename"
+    default "tegra234-p3768-camera-zedlink-mono-sl-overlay.dtbo"
+    help
+      Filename of the compiled DTBO to stage into /boot/ and register in
+      extlinux.conf. Built by Phase 2 from the Stereolabs DTS source.
+
+endif

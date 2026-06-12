@@ -1,0 +1,22 @@
+# Axelera plugin   sub-options, shown only when AXELERA_METIS is enabled.
+
+if AXELERA_METIS
+
+config AXELERA_PROMOTE_INTREE
+    bool "Promote Axelera driver to in-tree build (vermagic safety)"
+    default y
+    help
+      Creates a drivers/misc/axelera/ shim with Kconfig/Makefile wrappers
+      that pull the vendor driver into the kernel's own build system. This
+      guarantees the resulting metis.ko has a vermagic string that matches
+      the running kernel. Disable only if managing the OOT build yourself.
+
+config AXELERA_UDEV_RULES
+    bool "Stage Axelera udev rules into rootfs"
+    default y
+    help
+      Copies 72-axelera.rules from the axelera-driver tree into
+      /etc/udev/rules.d/ so the Metis device node has correct permissions
+      at first boot without requiring sudo for inference processes.
+
+endif

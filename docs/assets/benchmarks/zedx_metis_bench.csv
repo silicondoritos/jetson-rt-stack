@@ -1,0 +1,12 @@
+sample,model,mode,fps_req,depth_every,bodies,seconds,frames,fps,gr3d_avg_pct,gr3d_max_pct,tj_avg_c,vdd_in_mw,ram_peak_mb
+infer,yolov5s-v7-coco,HD1200,60,-,1,14,788,56.275,24,59,59.8,14070,7456
+infer,yolov8s-coco,HD1200,60,-,1,14,792,56.4107,24,58,60.0,14049,7466
+infer,yolov8s-coco,SVGA,120,-,1,14,1292,92.1439,20,60,60.0,13593,7291
+infer,yolov8l-coco,HD1200,60,-,1,14,512,36.5282,24,52,59.9,13536,7459
+fusion,yolov8s-coco,HD1200,60,1,1,14,486,34.589,46,98,60.8,17253,8411
+fusion,yolov8s-coco,HD1200,60,3,1,14,642,45.7985,34,86,61.1,15710,8431
+fusion,yolov8s-coco,HD1200,60,6,1,14,748,53.3227,28,93,61.2,15183,8450
+fusion,yolov8s-coco,HD1200,60,3,0,14,620,44.1622,28,77,61.2,15047,8262
+fusion,yolov8s-coco,SVGA,60,3,1,14,487,34.7348,24,69,61.0,14243,8236
+fusion,yolov8l-coco,HD1200,60,3,1,14,545,38.7888,32,80,61.0,15208,8474
+fusion,yolov8l-coco,SVGA,60,3,1,14,523,37.2601,29,85,61.0,14212,8220

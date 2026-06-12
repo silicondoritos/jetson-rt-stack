@@ -1,0 +1,65 @@
+#!/bin/bash
+# =============================================================================
+# /usr/local/bin/axrun   pinned-execution wrapper for inference processes
+# =============================================================================
+# Run any command with the cgroup + CPU affinity that the AV platform
+# expects for Metis inference: pinned to core 1, OOM-shielded, RT-friendly
+# scheduler class. Use it instead of bare `python detect_metis.py` in shells
+# or oneshot debug sessions.
+#
+# Usage:
+#   axrun <command> [args...]              # default: core 1, normal priority
+#   axrun --cpu 4-5 <cmd>                  # override pinning (e.g. SLAM cores)
+#   axrun --rt <cmd>                       # add SCHED_FIFO priority 50
+#   axrun --no-oom-shield <cmd>            # skip oom_score_adj=-1000
+#   axrun --gpu <cmd>                      # GPU/SLAM profile (cores 4-5, no rt)
+#   axrun --slam <cmd>                     # alias for --gpu
+#
+# The systemd-run --scope path inside launch_av_mission.sh already does this
+# for the boot-time mission stack. axrun is for ad-hoc / interactive runs.
+# =============================================================================
+set -u
+
+CPUS=1                  # default: pin to core 1 (Metis core)
+RT=0
+OOM_SHIELD=1
+PROFILE=metis
+
+usage() { sed -n '/^# =============/,/^# =============$/p' "$0" | sed 's/^# //'; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cpu) CPUS="$2"; shift 2 ;;
+        --rt)  RT=1; shift ;;
+        --no-oom-shield) OOM_SHIELD=0; shift ;;
+        --gpu|--slam)
+            PROFILE=slam; CPUS="4-5"; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) echo "axrun: unknown flag $1" >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
+
+[ $# -ge 1 ] || { usage; exit 1; }
+
+# Build the command with taskset + chrt (if --rt) wrappers.
+CMD=("$@")
+if [ "$RT" = "1" ]; then
+    # SCHED_FIFO priority 50   higher than typical kernel threads but below
+    # critical IRQ-thread defaults at 50 too (Linux RT default). Operator
+    # bumps higher if needed.
+    CMD=(chrt -f 50 "${CMD[@]}")
+fi
+CMD=(taskset -c "$CPUS" "${CMD[@]}")
+
+# OOM shield: -1000 means "never select for OOM". Only apply to our own pid
+# AFTER fork   taskset/chrt would otherwise inherit it cleanly.
+if [ "$OOM_SHIELD" = "1" ] && [ -w /proc/self/oom_score_adj ]; then
+    echo -1000 > /proc/self/oom_score_adj 2>/dev/null || true
+fi
+
+echo "[axrun] profile=$PROFILE cpus=$CPUS rt=$RT oom_shield=$OOM_SHIELD" >&2
+echo "[axrun] exec: ${CMD[*]}" >&2
+
+exec "${CMD[@]}"

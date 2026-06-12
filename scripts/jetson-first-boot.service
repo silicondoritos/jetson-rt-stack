@@ -1,0 +1,14 @@
+[Unit]
+Description=Jetson Orin NX Post-Boot Initialization
+After=network.target multi-user.target
+ConditionPathExists=!/home/j/.jetson_initialized
+
+[Service]
+Type=oneshot
+ExecStart=/home/j/jetson_first_boot.sh
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
