@@ -68,3 +68,8 @@ zedx-daemon-cache/
 
 # Rich-text exports for forum posts (generated, never commit)
 *_rich.html
+
+# Serial-console captures / field telemetry (may contain serials/MACs, never commit)
+log-*.txt
+*-serial-telem.txt
+networking-issue.txt

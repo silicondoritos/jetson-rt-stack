@@ -249,6 +249,7 @@ The docs, grouped by reader journey.
 **Operations**
 
 - [Runbook]({{ '/RUNBOOK' | relative_url }}): decision trees for repeat deploys and recovery.
+- [Operations]({{ '/OPERATIONS' | relative_url }}): day-2 operator guide — clock/Metis golden rule, SSH access, GUI/headless toggle, NPU/Wi-Fi/USB-C checks, boot recovery (ships on-device as `~/README.md`).
 - [Platform resilience]({{ '/UAV_RESILIENCE' | relative_url }}): watchdog, journald, chrony, brownout guard, PCIe AER.
 - [Black-box]({{ '/BLACKBOX' | relative_url }}): hash-chained event log plus NVENC ROS bag.
 - [Data partition]({{ '/DATA_PARTITION' | relative_url }}): btrfs, zstd, scrub.

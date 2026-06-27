@@ -201,6 +201,7 @@ The complete map of every doc, grouped by reader journey, is on the [docs site f
 |---|---|
 | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | Zero to flashed Jetson in 90 minutes |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operational decision trees (repeat deploys, recovery) |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Day-2 operator guide (clock/Metis golden rule, SSH access, GUI/headless toggle, NPU/Wi-Fi/USB-C checks); ships on-device as `~/README.md` |
 | [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md) | Every third-party input (tarballs, NDA trees, wheels, apt repos): where from, where it goes |
 | [`docs/AUTOMATION.md`](docs/AUTOMATION.md) | How Makefile + scripts + `versions.env` compose |
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Symptom-first failure modes |

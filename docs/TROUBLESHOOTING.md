@@ -42,7 +42,10 @@ for healthy performance baselines.
 [F-7](#f-7-boot-reaches-the-usb-gadget-ping-works-but-never-reaches-sshd) ping OK but no ssh ·
 [F-8](#f-8-nvgpu-unable-to-recover-gr-falcon-no-cuda-nvpmodel-fails-cma) nvgpu falcon errors, no CUDA ·
 [F-9](#f-9-rtl8822ce-wi-fi-pcie-link-never-trains-no-wlan0) Wi-Fi PCIe link never trains ·
-[F-10](#f-10-never-force-load-a-hardware-probing-driver-from-modules-loadd) modules-load.d boot hang
+[F-10](#f-10-never-force-load-a-hardware-probing-driver-from-modules-loadd) modules-load.d boot hang ·
+[F-11](#f-11-every-boot-lands-in-recovery-boot-and-drops-to-bash-51) every boot drops to `bash-5.1#` ·
+[F-12](#f-12-boot-worked-then-an-in-place-rebuild-mangled-extlinuxconf-multiple-root) in-place rebuild mangled extlinux ·
+[F-13](#f-13-anything-plugged-into-usb-c-storms-the-log-and-wedges-the-console) USB-C storms the console
 
 **Vermagic / module loadability**:
 [V-1](#v-1-invalid-module-format-in-dmesg) `Invalid module format` ·
@@ -70,7 +73,8 @@ for healthy performance baselines.
 [H-9](#h-9-every-mission-unit-crash-loops-instantly-activating-auto-restart) mission units crash-loop ·
 [H-10](#h-10-jtop-crashes-when-opening-the-gpu-tab-keyerror-3d_scaling) jtop GPU tab crash ·
 [H-11](#h-11-no-way-to-see-metis-utilization-axmonitor-missing-from-the-pip-installed-runtime) no Metis utilization view ·
-[H-12](#h-12-zed-sdk-camera-stream-failed-to-start-after-a-camera-client-is-killed) CAMERA STREAM FAILED TO START
+[H-12](#h-12-zed-sdk-camera-stream-failed-to-start-after-a-camera-client-is-killed) CAMERA STREAM FAILED TO START ·
+[H-13](#h-13-metis-enumerates-in-lspci-but-axl-irq-msi-timeout-floods-dmesg) Metis enumerates but `axl IRQ MSI timeout`
 
 ## Build & integration
 
@@ -264,7 +268,9 @@ for healthy performance baselines.
 - **Related**: `L4TLauncher: Attempting Recovery Boot` means the normal extlinux boot was
   not used and the QSPI `boot.img` was loaded instead (a fallback). `Attempting Direct
   Boot` means the rootfs extlinux path was used. If you see Recovery Boot **and** a hang,
-  suspect the root device (F-4) in the `boot.img` cmdline.
+  suspect the root device (F-4) in the `boot.img` cmdline. If you see Recovery Boot on
+  **every** power-on and it dead-ends at a `bash-5.1#` shell, the A/B boot-status flag is
+  exhausted and L4TLauncher is forcing the fallback; see **F-11**.
 
 ### F-6. Custom RT kernel hangs in early boot, but the stock kernel boots fine
 
@@ -392,7 +398,19 @@ for healthy performance baselines.
 - **Boot-time cost of a dead C1**: the controller burns ~40 s per boot in link-wait
   windows (two ~20 s LTSSM waits at our `LINK_WAIT_MAX_RETRIES=200`). If Wi-Fi on a
   faulted board is abandoned, trim `LINK_WAIT_MAX_RETRIES` back toward stock or disable
-  the C1 controller in the device tree to reclaim that time.
+  the C1 controller in the device tree to reclaim that time. The surgical, **reversible**
+  way (no rebuild — patch the booted DTB and point `extlinux` at it):
+  ```bash
+  cp /boot/<your>.dtb /boot/<your>-c1off.dtb
+  fdtput -t s /boot/<your>-c1off.dtb /bus@0/pcie@14100000 status disabled
+  fdtget    /boot/<your>-c1off.dtb /bus@0/pcie@14100000 status   # -> disabled
+  fdtget    /boot/<your>-c1off.dtb /bus@0/pcie@14160000 status   # Metis -> okay (untouched)
+  # then set  FDT /boot/<your>-c1off.dtb  in /boot/extlinux/extlinux.conf
+  ```
+  Verified 2026-06-27: with C1 disabled the 40 s stall is gone and the serial log no longer
+  shows `14100000.pcie` at all, while Metis (`14160000`), NVMe (`141e0000`), and Realtek GbE
+  (`140a0000`) still train `Link up`. To bring the Intel/Key-E slot back later, point `FDT`
+  back at the unmodified DTB — nothing else changes.
 
 ### F-10. Never force-load a hardware-probing driver from modules-load.d
 
@@ -409,6 +427,127 @@ for healthy performance baselines.
   a deliberate `sudo modprobe rtl8822ce` still works for supervised bring-up. Once the
   driver is proven to probe cleanly, re-bake with `WIFI_AUTOLOAD=1` to enable boot-time
   autoload.
+
+### F-11. Every boot lands in Recovery Boot and drops to `bash-5.1#`
+
+- **Symptom**: on the serial console (F-5), **every** power-on prints
+  `L4TLauncher: Attempting Recovery Boot`, then the recovery initrd insmods a few
+  modules (`tegra-bpmp-thermal.ko`, `pwm-tegra.ko`, `pwm-fan.ko`), prints
+  `Finding OTA work dir on external storage devices` →
+  `OTA work directory is not found on internal and external storage devices`, and lands
+  on a shell:
+  ```
+  bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+  bash: no job control in this shell
+  bash-5.1#
+  ```
+  The **same** sequence appears whether you attempt a "normal" boot or a deliberate
+  recovery boot. It reads like a kernel crash at the `insmod`/OTA step. **It is not.**
+- **Why it's not a crash**: that whole sequence *is* the recovery initrd's designed
+  dead-end — it hunts for an OTA update package, finds none, and drops to a maintenance
+  shell; the watchdog then reboots. Your real kernel and the rootfs `extlinux.conf`
+  **never execute**, so nothing downstream (Metis, NVMe, camera) is "broken" — it is
+  simply never reached. The fact that it happens on *both* a "normal" and a "recovery"
+  attempt is the tell: **both are being redirected into the same fallback.**
+  (`/dev/mmcblk0 does not exist` is normal — the Orin NX has no eMMC; `/dev/sd?1 does not
+  exist` just means no USB disk was attached for that boot.)
+- **Cause**: L4TLauncher falls back to Recovery Boot when the rootfs A/B **boot-status /
+  retry-count** redundancy — stored in the module QSPI UEFI varstore, managed by
+  `nvbootctrl` — is exhausted. A run of failed or power-cut boots (exactly what a botched
+  in-place rebuild, F-12, or a wedged root device, F-4, produces) burns the retry count to
+  zero and pins **every** subsequent boot into the fallback, even after the underlying
+  problem is fixed.
+- **Fix (non-destructive, stack untouched — verified 2026-06-27)**: force Direct Boot from
+  UEFI. Power on with HDMI + a USB keyboard, tap `Esc`/`Del` at the splash →
+  **Device Manager → NVIDIA Configuration → L4T Configuration**, set **OS chain A status →
+  Normal (0x0)** (and chain B if present) and **L4T Boot Mode → ExtLinux**, then `F10` to
+  save and reset. The board then prints `Attempting Direct Boot`, runs the rootfs
+  `extlinux.conf`, and a single clean boot to `multi-user.target` resets the retry counter
+  via `l4t-rootfs-validation-config.service`, so later boots Direct-Boot on their own.
+  (Menu labels vary slightly by UEFI build; the two knobs are always the OS-chain status
+  and the boot mode.) Verified result: serial shows `Attempting Direct Boot` → our cmdline
+  (`root=PARTUUID=… rootfstype=ext4 … console=ttyTCU0`) → Ubuntu autologin, with
+  Metis/NVMe/Realtek PCIe all `Link up`.
+- **Prerequisite**: the rootfs extlinux must actually be bootable first — a single correct
+  `root=` (F-12) and the right `FDT` — or Direct Boot just bounces back into recovery and
+  re-exhausts the counter.
+
+### F-12. Boot worked, then an in-place rebuild mangled `extlinux.conf` (multiple `root=`)
+
+- **Symptom**: the stack booted fine, then an in-place "make it new" / re-bake **on the
+  running device** left it unbootable — black screen, or forced into Recovery Boot (F-11).
+  The rootfs `/boot/extlinux/extlinux.conf` `APPEND` line now carries **two or three
+  `root=`** tokens, e.g. `root=/dev/nvme0n1p1 … root=PARTUUID=<uuid> … root=/dev/nvme0n1p1`,
+  with RT isolation args concatenated onto a second copy of the stock factory args. Sibling
+  `/boot/Image.prestock-custom` and `/boot/Image.custom-bak-<date>` files confirm the
+  kernel was swapped in place too.
+- **Cause**: a re-bake/restore that **appended** boot args instead of replacing them,
+  layering the factory cmdline over the custom one (and sometimes pointing `FDT` at the
+  wrong DTB). The kernel uses the *last* `root=`, so a duplicate is not always fatal, but
+  mixing `root=/dev/nvme0n1p1` (enumeration-order, races PCIe bring-up) with
+  `root=PARTUUID=` plus a wrong/limited `FDT` wedges the mount and trips the boot-status
+  flag (→ F-11).
+- **Fix**: restore a clean **single-`root=`** extlinux. Canonical good form for this build:
+  ```
+  LABEL primary
+    LINUX /boot/Image
+    INITRD /boot/initrd
+    FDT /boot/<your>.dtb
+    APPEND ${cbootargs} root=PARTUUID=<APP-partuuid> rw rootwait rootfstype=ext4 pcie_aspm=off nohz_full=1-5 isolcpus=1-5 rcu_nocbs=1-5 irqaffinity=0 console=ttyTCU0,115200 console=tty0
+    OVERLAYS /boot/<camera-overlay>.dtbo
+  ```
+  Get the APP PARTUUID with `lsblk -o NAME,PARTUUID` (or `blkid`); confirm it is the rootfs
+  partition.
+- **Integrity check** (make this a habit before every reboot after touching boot config):
+  ```bash
+  grep -c 'root=' /boot/extlinux/extlinux.conf   # must print 1
+  ```
+  If it prints 2+, you have the mangle. Keep a known-good copy (`extlinux.conf.good`) so a
+  bad re-bake is a one-line restore. The supported pipeline avoids this entirely —
+  `03_bake_rootfs.sh` strips prior RT args / `OVERLAYS` / `root=` before injecting fresh
+  ones (F-2); this failure mode comes from hand-editing or re-baking *in place on the live
+  device*.
+- **The DTB is almost certainly not your problem**: a `dtc` decompile of the custom
+  `tegra234-p3768-0000+p3767-0000-nv.dtb` against the pristine BSP DTB is **identical** for
+  the Metis controller node (`pcie@14160000`) and every PCIe node — the whole-file diff is
+  two lines (build name/timestamp). So if Metis worked before and stopped, look at the boot
+  config (this entry) and the firmware handshake (H-13), not the DTB. Verify yourself:
+  `fdtget <dtb> /bus@0/pcie@14160000 status` (Metis) and
+  `fdtget <dtb> /bus@0/pcie@14100000 status` (Key-E Wi-Fi).
+
+### F-13. Anything plugged into USB-C storms the log and wedges the console
+
+- **Symptom**: the box runs fine until you plug **anything** into the USB-C port (to flash,
+  or a peripheral); the kernel console then instantly floods, forever:
+  ```
+  tegra-xudc 3550000.usb: CEC, PORTSC = 0xffffffff
+  ** 437 printk messages dropped **
+  ```
+  hundreds of lines a second with hundreds dropped between each — the `tty`/serial console
+  becomes unusable and the box *feels* dead ("USB-C kills the kernel"). The controller
+  initialises cleanly at boot (`tegra-xudc 3550000.usb: Adding to iommu group 6`, ~6 s);
+  the storm begins **only** at the plug-in event (observed t≈171 s, telemetry 2026-06-27).
+- **Cause**: `3550000.usb` is the Tegra **device-mode (xudc / USB gadget)** controller.
+  `PORTSC = 0xffffffff` is an all-ones MMIO read — the controller's register block is
+  returning garbage (clock-gated / wedged) while its IRQ handler tries to service a
+  port-change event. Unable to read a valid status, the handler never clears the interrupt,
+  so it immediately re-fires → a self-sustaining printk storm. This is the device/gadget
+  side, separate from the xHCI **host** side and from PCIe.
+- **Does NOT affect recovery flashing**: USB-C recovery (RCM) flashing runs over the
+  **bootROM / MB1 USB path**, not the Linux `tegra-xudc` driver, so this running-kernel
+  storm does not break `l4t_initrd_flash` in recovery mode. If flashing itself fails, that
+  is F-1, not this.
+- **Mitigation (working theory; permanent fix pending live confirmation, 2026-06-27)**: if
+  the running OS does not need USB device-mode (gadget RNDIS/ACM), stop the storm by
+  unbinding the controller —
+  ```bash
+  echo 3550000.usb | sudo tee /sys/bus/platform/drivers/tegra-xudc/unbind
+  ```
+  — or simply keep USB-C empty during operation. While working the console, `sudo dmesg -n 1`
+  raises the loglevel threshold so the storm stops blinding you. A permanent fix (rate-limit
+  the handler, or build the port host-only in the DTB/defconfig when device-mode is unused)
+  is being confirmed against this unit; this entry will record the verified resolution once
+  tested.
 
 ## Vermagic / module loadability
 
@@ -756,6 +895,69 @@ for healthy performance baselines.
   of `SIGKILL`; a well-behaved client releases the stream on exit. Distinct from H-7 (daemon
   socket lost) - there the daemon is gone, here the daemon is up but the stream pipeline is
   stuck. Verified live 2026-06-11.
+
+### H-13. Metis enumerates in `lspci` but `axl IRQ MSI timeout` floods dmesg
+
+- **Symptom**: unlike H-1, the Metis **does** enumerate — `lspci -d 1f9d:` shows it at
+  `0004:01:00.0` (`[1f9d:1100]`, class `0x120000`), `14160000.pcie` logs `Link up`, BARs are
+  assigned, and the `axl` driver binds — but the NPU is unusable and dmesg repeats, every
+  ~2.048 s forever:
+  ```
+  axl 0004:01:00.0: IRQ MSI timeout (24 2)
+  ```
+  No model ever runs. Observed 2026-06-27 on the restored stack.
+- **What it means**: link training and PCIe enumeration **succeeded** — this is *past* H-1,
+  so do not chase `LINK_WAIT_MAX_RETRIES`. The failure is one step later: the `axl` driver
+  kicks the device's boot/mailbox handshake and waits for the Metis to answer with an MSI;
+  the MSI never arrives, so it times out and retries on a ~2 s heartbeat. The card is
+  electrically present but its firmware/interrupt path is not completing.
+- **Key cross-check**: **NVMe on `0007:01:00.0` also uses PCIe MSI and works** on the same
+  boot (root mounts, EXT4 clean), so the GIC/MSI mechanism is alive system-wide — the fault
+  is specific to the Metis controller/device or its driver↔firmware pairing, **not** MSI in
+  general.
+- **Root cause (verified live 2026-06-27): the system clock was stuck at 1970-01-01.** The
+  Metis is not wedged at all — `axdevice` reads it fine (`flver=1.3.2 bcver=1.4
+  clock=800MHz`) and the on-device firmware logs over MMIO (`axlogdevice`); **only the MSI
+  (device→host interrupt) path is dead.** A 1970 clock breaks the Axelera Voyager runtime's
+  device bring-up — time/cert validation fails and the tooling throws
+  `ERROR: ZIP does not support timestamps before 1980` — so the runtime never finishes
+  programming the device's interrupt path. The kernel's `metis.ko` mailbox heartbeat then
+  waits forever for an MSI the device was never told to send → `IRQ MSI timeout` every 2 s.
+  (The same 1970 tell shows up as PAM's `account root has password changed in future` on
+  every `sudo`.)
+- **Confirm it**:
+  ```bash
+  date                                               # is it 1970?  <-- the smoking gun
+  grep -E '^ *(25[1-9]|2[678][0-9]):' /proc/interrupts | awk '{for(i=2;i<=9;i++)s+=$i}END{print "Metis MSI:",s+0}'
+  /opt/av-env/bin/axdevice                           # device IS readable (flver/bcver/clock) => not dead
+  /opt/av-env/bin/axdevice report                    # fails: "ZIP does not support timestamps before 1980"
+  sudo lspci -vvv -s 0004:01:00.0 | grep -iE 'MSI|Masking'   # host side: Enable+ Count=32/32 Masking 0 (perfect)
+  sudo dmesg | grep -iE 'smmu|iommu|fault'           # NO fault => host plumbing flawless, device just never fires
+  ```
+  The signature is unambiguous: MSI count **frozen at 0**, host MSI capability `Enable+` and
+  unmasked, **zero** SMMU faults, and the clock at 1970. The device is alive on the
+  control-plane but never delivers an interrupt.
+- **Fix (verified)**: set the clock, then let the runtime re-init (it retries on its own; or
+  restart `axsystemserver.service`):
+  ```bash
+  sudo date -u -s "2026-06-27 17:18:16"   # a real UTC time (copy from any synced box)
+  sudo hwclock -w                          # persist to the RTC
+  ```
+  Within seconds the `IRQ MSI timeout` spam **stops**, the Metis MSI vectors in
+  `/proc/interrupts` start climbing (0 → hundreds), and inference returns. Verified on this
+  unit immediately after: `axrunmodel --seconds 5 ~/voyager-sdk/build/yolo11s-coco-onnx/yolo11s-coco-onnx/1`
+  → **dev 469 FPS / system 405 FPS**, 2028 frames, 45 °C; MSI delivered 0 → 1167+.
+- **Keep it fixed (critical for a field unit)**: a clock back at 1970 after a **cold
+  power-drain** re-breaks Metis the same way. `hwclock -w` survives a warm reboot, but a
+  carrier with no RTC battery resets to 1970 on full power loss. Guard it two ways: (a) when
+  the unit has internet, `chrony` (already installed; `timesyncd` is masked) syncs on boot;
+  (b) offline, add a **clock-floor** service — the fake-hwclock equivalent — that refuses to
+  let the clock sit in the past (saves the time periodically, restores it early at boot
+  before `axsystemserver`). `apt install fake-hwclock` does this if the unit is online.
+- **Do NOT chase**: `LINK_WAIT_MAX_RETRIES` (this is past H-1), the DTB (byte-identical to
+  factory, see F-12), SMMU/IOMMU (no fault logged), driver vermagic (`metis.ko` binds fine),
+  or any hardware / cold-drain-the-card theory — the card runs at full FPS the instant the
+  clock is sane.
 
 ## Logs
 
