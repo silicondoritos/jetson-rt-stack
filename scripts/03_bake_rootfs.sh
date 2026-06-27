@@ -243,6 +243,38 @@ sudo ln -sf /etc/systemd/system/jetson-clock-floor-save.timer \
 # Seed the floor with the build time so even the very first boot is never 1970.
 date +%s | sudo tee "$ROOTFS/var/lib/clock-floor.epoch" >/dev/null
 echo "   -> clock-floor guard staged (seed $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+# Re-apply timer (catch any late RTC hctosys on stock images) + axsystemserver
+# ExecStartPre so the clock is floored right before Metis bring-up (belt-and-
+# suspenders alongside CONFIG_RTC_HCTOSYS_DEVICE=rtc1).
+sudo cp "$SCRIPTS/jetson-clock-floor-late.service" "$ROOTFS/etc/systemd/system/jetson-clock-floor-late.service"
+sudo cp "$SCRIPTS/jetson-clock-floor-late.timer"   "$ROOTFS/etc/systemd/system/jetson-clock-floor-late.timer"
+sudo chmod 644 "$ROOTFS/etc/systemd/system/jetson-clock-floor-late."{service,timer}
+sudo ln -sf /etc/systemd/system/jetson-clock-floor-late.timer \
+    "$ROOTFS/etc/systemd/system/timers.target.wants/jetson-clock-floor-late.timer"
+sudo install -D -m 0644 "$SCRIPTS/axsystemserver-clock-floor.conf" \
+    "$ROOTFS/etc/systemd/system/axsystemserver.service.d/10-clock-floor.conf"
+# systemd build-date floor: PID1 bumps the clock to this file's mtime at boot if
+# earlier (RTC-less systems) - guarantees no process ever sees 1970, survives a
+# /var wipe. Stamped to the bake time.
+sudo touch "$ROOTFS/usr/lib/clock-epoch" 2>/dev/null || { sudo mkdir -p "$ROOTFS/usr/lib"; sudo touch "$ROOTFS/usr/lib/clock-epoch"; }
+echo "   -> clock-floor-late + axsystemserver ExecStartPre + /usr/lib/clock-epoch staged"
+
+# =============================================================================
+# NTP: most-reliable global servers (Cloudflare anycast + Google + NIST) so an
+# ONLINE unit corrects the clock at boot regardless of the RTC. Offline units
+# rely on the clock-floor guard above.
+# =============================================================================
+if [ -f "$ROOTFS/etc/chrony/chrony.conf" ]; then
+    grep -q 'RELIABLE NTP (jetson-av)' "$ROOTFS/etc/chrony/chrony.conf" || \
+    sudo tee -a "$ROOTFS/etc/chrony/chrony.conf" >/dev/null <<'CHRONY'
+
+# RELIABLE NTP (jetson-av) - Cloudflare anycast + Google leap-smeared + NIST
+server time.cloudflare.com iburst
+server time.google.com iburst
+server time.nist.gov iburst
+CHRONY
+    echo "   -> reliable NTP servers added to chrony.conf"
+fi
 
 # =============================================================================
 # WiFi: Intel AX210 (iwlwifi) + legacy RTL8822CE (rtw88) driver load policy

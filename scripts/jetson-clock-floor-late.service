@@ -1,0 +1,5 @@
+[Unit]
+Description=Re-apply clock floor after late RTC hctosys (battery-less carrier)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jetson_clock_floor.sh apply

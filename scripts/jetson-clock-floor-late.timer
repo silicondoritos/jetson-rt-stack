@@ -1,0 +1,6 @@
+[Unit]
+Description=Re-apply clock floor 45s after boot (beat late PMIC-RTC hctosys)
+[Timer]
+OnBootSec=45s
+[Install]
+WantedBy=timers.target

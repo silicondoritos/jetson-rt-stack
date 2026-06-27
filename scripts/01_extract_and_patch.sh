@@ -181,6 +181,19 @@ CONFIG_IWLMVM=m
 CONFIG_IWLWIFI_LEDS=y
 
 # =============================================================
+# AV KERNEL: RTC hctosys   battery-less carrier (no RTC backup cell)
+# This carrier has no RTC battery, so every cold boot starts at 1970. The PMIC
+# RTC (nvvrs-pseq-rtc) registers as rtc0 ~30 s into boot and, because the kernel
+# calls do_settimeofday64() UNCONDITIONALLY at RTC registration for the hctosys
+# device, its late probe STOMPS the clock back to 1970 AFTER early userspace
+# already set it -> the Axelera runtime then brings up Metis at 1970 (ZIP<1980 /
+# cert checks fail) -> `axl IRQ MSI timeout`, NPU dead. Point hctosys at the
+# Tegra SoC RTC (rtc1), which registers early (~2 s); its (also-1970) read lands
+# before sysinit, so the clock-floor guard + chrony then own the clock and the
+# late rtc0 never overwrites it. See docs/TROUBLESHOOTING.md H-13 / RTC-OFFLINE.
+CONFIG_RTC_HCTOSYS_DEVICE="rtc1"
+
+# =============================================================
 # AV KERNEL: PCIe ASPM   stock parity in code (=y); the Axelera
 # sub-microsecond wake policy is enforced at runtime via the
 # pcie_aspm=off kernel cmdline arg (see versions.env RT_BOOT_ARGS).

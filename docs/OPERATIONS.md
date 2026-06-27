@@ -23,9 +23,13 @@ device bring-up (cert/time + `ZIP < 1980` failures), so the NPU never gets inter
 and `dmesg` spams `axl 0004:01:00.0: IRQ MSI timeout`. Everything else looks fine —
 this trap has cost days. **If the NPU is dead, check `date` FIRST.**
 
-- The **clock-floor guard** (`clock-floor.service`) fixes this automatically at every
-  boot — it floors the clock to the last-known-good time *before* the Axelera runtime
-  starts. Normally you do nothing.
+- This is handled automatically, **offline-safe**, by four baked layers: the kernel
+  points `hctosys` at the early RTC (`CONFIG_RTC_HCTOSYS_DEVICE=rtc1`) so the late PMIC
+  RTC can't stomp the clock back to 1970; the **clock-floor guard** floors the clock to
+  the last-known-good time at boot *and right before the Axelera runtime*; `/usr/lib/clock-epoch`
+  gives systemd a build-date floor; and `chrony` (Cloudflare/Google/NIST) syncs exact time
+  whenever the unit is online. **Normally you do nothing.**
+- Manual fix if ever needed (e.g. an older image):
 - Manual fix if ever needed:
   ```
   sudo date -u -s "YYYY-MM-DD HH:MM:SS"   # real UTC, copy from a synced machine
@@ -109,6 +113,10 @@ Recovery-mode **flashing** uses the bootROM USB path and is unaffected by any of
 - **`extlinux.conf` sanity:** must have exactly one `root=` —
   `grep -c root= /boot/extlinux/extlinux.conf` returns `1`. More than one = mangled
   (restore a `*.good`/backup). Full detail: repo `docs/TROUBLESHOOTING.md` F-11 / F-12.
+- **Stuck in a UEFI `HTTP Boot over IPv4` / `PXE` loop** (serial spams `IPv4 IPv4 …`, never
+  reaches Linux): the UEFI boot order has a **network interface ahead of the NVMe**. Fix from
+  Linux: `sudo efibootmgr` then `sudo efibootmgr -o <NVMe-entry-first>,…` (put the
+  `…NVMe(…)` entry first). See `docs/TROUBLESHOOTING.md` F-15.
 
 ---
 

@@ -46,7 +46,8 @@ for healthy performance baselines.
 [F-11](#f-11-every-boot-lands-in-recovery-boot-and-drops-to-bash-51) every boot drops to `bash-5.1#` ·
 [F-12](#f-12-boot-worked-then-an-in-place-rebuild-mangled-extlinuxconf-multiple-root) in-place rebuild mangled extlinux ·
 [F-13](#f-13-anything-plugged-into-usb-c-storms-the-log-and-wedges-the-console) USB-C storms the console ·
-[F-14](#f-14-intel-ax210-wi-fi-bring-up-iwlwifi-m2-key-e--pcie-c1) AX210 Wi-Fi bring-up
+[F-14](#f-14-intel-ax210-wi-fi-bring-up-iwlwifi-m2-key-e--pcie-c1) AX210 Wi-Fi bring-up ·
+[F-15](#f-15-boot-hangs-in-a-uefi-httppxe-network-boot-loop-usb-eth-dongle) UEFI netboot loop
 
 **Vermagic / module loadability**:
 [V-1](#v-1-invalid-module-format-in-dmesg) `Invalid module format` ·
@@ -572,12 +573,49 @@ for healthy performance baselines.
   nmcli dev status                     # wlan0 present
   nmcli dev wifi connect "<SSID>" password "<PASS>"
   ```
-- **If `wlan0` never appears**: confirm the FDT is C1-enabled; then
-  `sudo dmesg | grep 14100000`. `Phy link never came up` is the C1 link symptom from F-9
-  (a board/slot fault with two *RTL* cards) — **re-test with the AX210 before concluding**:
-  the Metis "hardware" theory turned out to be a software clock bug (H-13), so don't assume
-  the slot is dead until the AX210 itself fails to train. If `iwlwifi` loads but no
-  firmware, ensure `iwlwifi-ty-*` is in `/lib/firmware` (`sudo apt install linux-firmware`).
+- **Result on this board (verified 2026-06-27)**: the AX210 PCIe link **does NOT train on
+  C1** — `tegra194-pcie 14100000.pcie: Phy link never came up`, no `8086:2725` in `lspci`, no
+  `wlan0` — **even with C1's DTB made byte-identical to factory** (the `vpcie3v3-supply`
+  removed). That is now **three** cards (2× RTL8822CE + the Intel AX210) plus the **stock
+  NVIDIA kernel** all failing identically. A forum survey of "Phy link never came up" on
+  C1/`14100000` found **no software fix for this exact fingerprint** (factory card + factory
+  DTB + stock kernel all fail, while the card's Bluetooth works over USB): every matching
+  case resolved to a board/signal-integrity fault or RMA. So — unlike Metis, which was a
+  software clock bug (H-13) — the **C1 Key-E PCIe lane is a genuine board-side fault** on this
+  unit. (`lane 3` per the stock ODMDATA `hsio-uphy-config-0` is correctly assigned to C1;
+  it simply never leaves LTSSM Detect/Polling.)
+- **Remaining software long-shots (low probability)**: C1 is trained by the **kernel** (it is
+  not a UEFI boot device), so a kernel-side Gen1 clamp `nvidia,max-link-speed = <1>` on the
+  `pcie@14100000` node *via the extlinux FDT* is the one cheap thing left to try (NVIDIA's
+  documented workaround for marginal-SI "Phy link never came up"; rarely rescues a link stuck
+  in Polling.Compliance). The firmware Gen2 clamp via ODMDATA `hsio-uphy-config-40` would need
+  a full QSPI reflash. **Practical path: a USB Wi-Fi dongle** — the AX210's Bluetooth keeps
+  working over USB regardless.
+
+### F-15. Boot hangs in a UEFI HTTP/PXE network-boot loop (USB-eth dongle)
+
+- **Symptom**: the board never reaches the OS; the serial console repeats the UEFI splash and
+  `>>Start HTTP Boot over IPv4 …` / `PXE …` endlessly (a flood of `IPv4` retries). SSH never
+  comes up. Often appears right after a host starts serving DHCP on the rescue link.
+- **Cause**: the UEFI `BootOrder` lists the **network interfaces as bootable devices ahead of
+  the NVMe**. On this unit the USB-eth dongle's HTTP/PXE entries (`Boot000B/000A/0009/0001`,
+  MAC `00E04C1D7288`) were *first*, with the NVMe (`Boot0008`) fifth. When a DHCP server
+  answers on that link, UEFI gets a lease and chases network boot forever instead of falling
+  through to the NVMe. With no DHCP it fails fast and boots the NVMe — which is why it only
+  bites once you add a DHCP server (e.g. the rescue-link `dnsmasq`).
+- **Fix (no UEFI menu needed — from inside Linux)**: put the NVMe first in the UEFI boot
+  order with `efibootmgr` (it edits the `BootOrder` EFI variable directly):
+  ```bash
+  sudo efibootmgr                       # find the NVMe entry (… NVMe(…)) and the netboot ones
+  sudo efibootmgr -o 0008,0006,0007,0000,0001,0002,0003,0004,0005,0009,000A,000B
+  #                  ^ NVMe first; netboot entries pushed to the end
+  ```
+  After this the NVMe boots first and the dongle is never a boot target, so the rescue-link
+  DHCP can stay up for SSH/internet without the loop. (To get *into* Linux the first time so
+  you can run `efibootmgr`, momentarily stop the host DHCP — `sudo systemctl stop
+  rescue-dhcp` — power-cycle so UEFI fails netboot fast and boots the NVMe, then restart it.)
+- **Alternative**: in UEFI Setup (`Esc` at splash) disable HTTP/PXE/Network boot. Same effect,
+  but `efibootmgr` is scriptable and survives.
 
 ## Vermagic / module loadability
 
@@ -977,13 +1015,34 @@ for healthy performance baselines.
   `/proc/interrupts` start climbing (0 → hundreds), and inference returns. Verified on this
   unit immediately after: `axrunmodel --seconds 5 ~/voyager-sdk/build/yolo11s-coco-onnx/yolo11s-coco-onnx/1`
   → **dev 469 FPS / system 405 FPS**, 2028 frames, 45 °C; MSI delivered 0 → 1167+.
-- **Keep it fixed (critical for a field unit)**: a clock back at 1970 after a **cold
-  power-drain** re-breaks Metis the same way. `hwclock -w` survives a warm reboot, but a
-  carrier with no RTC battery resets to 1970 on full power loss. Guard it two ways: (a) when
-  the unit has internet, `chrony` (already installed; `timesyncd` is masked) syncs on boot;
-  (b) offline, add a **clock-floor** service — the fake-hwclock equivalent — that refuses to
-  let the clock sit in the past (saves the time periodically, restores it early at boot
-  before `axsystemserver`). `apt install fake-hwclock` does this if the unit is online.
+- **Why a no-battery carrier hits this, and why it "never happened before" (deeper
+  mechanism, confirmed from kernel source)**: this carrier has no RTC backup cell, so every
+  cold boot starts at 1970. The PMIC RTC (`nvvrs-pseq-rtc`) registers as **rtc0 ~30 s into
+  boot**, and the kernel calls `do_settimeofday64()` *unconditionally* at RTC registration
+  for the hctosys device (`drivers/rtc/class.c`, no "skip if already set", no build-date
+  floor) — so rtc0's **late** probe **stomps the clock back to 1970 *after* early userspace
+  already set it**, and `axsystemserver` then brings up Metis at 1970. It "worked before"
+  only because those boots had **internet**: `chrony` corrected the clock before the runtime
+  ran. On an isolated/offline boot, nothing does — so it surfaced now. It is **not** a kernel
+  security guardrail; it's the userspace runtime failing date validation (ZIP<1980 + certs).
+- **Keep it fixed — baked into the image, works OFFLINE** (no internet required):
+  1. **Kernel** — `CONFIG_RTC_HCTOSYS_DEVICE="rtc1"`
+     ([01_extract_and_patch.sh](../scripts/01_extract_and_patch.sh)): points hctosys at the
+     early-probing Tegra SoC RTC (rtc1, ~2 s) so the late rtc0 never stomps the clock.
+  2. **clock-floor guard** ([03_bake_rootfs.sh](../scripts/03_bake_rootfs.sh)):
+     `/usr/local/sbin/jetson_clock_floor.sh` + `jetson-clock-floor.service` (sysinit) + a 45 s
+     re-apply timer + an `ExecStartPre` on `axsystemserver` — floors the clock to the
+     last-known-good time. **Hardened** after a self-inflicted bug (the early version's `save`
+     wrote a 1970 value into the floor during a cold-boot window and then perpetuated it): now
+     a hard-coded minimum (`HARD_MIN`), ratchet-up-only `save` that refuses any pre-2023 time,
+     and `apply` also writes the RTC. A corrupted/empty floor file can no longer push the
+     clock into the past.
+  3. **`/usr/lib/clock-epoch`** stamped to the build date — systemd PID1 floors the clock to
+     this file's mtime at boot (survives a `/var` wipe).
+  4. **chrony** with Cloudflare/Google/NIST servers — corrects to exact time the moment the
+     unit is online (on top of the offline floor).
+  Manual recovery on an un-fixed image: `sudo date -u -s "<real UTC>"` → `sudo hwclock -w` →
+  `axdevice --reload-firmware` (re-triggers Metis bring-up; MSI starts flowing again).
 - **Do NOT chase**: `LINK_WAIT_MAX_RETRIES` (this is past H-1), the DTB (byte-identical to
   factory, see F-12), SMMU/IOMMU (no fault logged), driver vermagic (`metis.ko` binds fine),
   or any hardware / cold-drain-the-card theory — the card runs at full FPS the instant the
