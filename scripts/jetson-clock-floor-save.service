@@ -1,0 +1,6 @@
+[Unit]
+Description=Persist current time as clock floor (Metis/Voyager 1970-clock guard)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jetson_clock_floor.sh save

@@ -1,0 +1,5 @@
+# Keep the USB-C device-mode controller (tegra-xudc, 3550000.usb) powered so its
+# IRQ handler never reads a clock-gated register (PORTSC=0xffffffff) and spin into
+# a printk storm when something is plugged into USB-C. See docs/TROUBLESHOOTING.md
+# F-13. Does not affect recovery-mode (bootROM) flashing or USB host mode.
+ACTION=="add", SUBSYSTEM=="platform", KERNEL=="3550000.usb", ATTR{power/control}="on"

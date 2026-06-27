@@ -218,7 +218,34 @@ sudo ln -sf /etc/systemd/system/jetson-rt-tune.service \
     "$ROOTFS/etc/systemd/system/multi-user.target.wants/jetson-rt-tune.service"
 
 # =============================================================================
-# WiFi: RTL8822CE driver load policy + auto-connect profile
+# Clock-floor guard   battery-less carrier protection
+# The p3768 carrier has NO RTC battery, so a full power-off resets the clock to
+# 1970. A 1970 clock breaks the Axelera Voyager runtime's Metis bring-up (the NPU
+# never gets MSI interrupts; dmesg spams `axl ... IRQ MSI timeout`). This floors
+# the clock to a known-good time EARLY at boot (sysinit, before axsystemserver)
+# and re-saves it every 15 min. chrony still corrects to real time when online.
+# See docs/TROUBLESHOOTING.md H-13 and docs/OPERATIONS.md.
+# =============================================================================
+echo "[*] Baking clock-floor guard (Metis 1970-clock protection)..."
+sudo install -D -m 0755 "$SCRIPTS/jetson_clock_floor.sh" "$ROOTFS/usr/local/sbin/jetson_clock_floor.sh"
+sudo cp "$SCRIPTS/jetson-clock-floor.service"      "$ROOTFS/etc/systemd/system/jetson-clock-floor.service"
+sudo cp "$SCRIPTS/jetson-clock-floor-save.service" "$ROOTFS/etc/systemd/system/jetson-clock-floor-save.service"
+sudo cp "$SCRIPTS/jetson-clock-floor-save.timer"   "$ROOTFS/etc/systemd/system/jetson-clock-floor-save.timer"
+sudo chmod 644 "$ROOTFS/etc/systemd/system/jetson-clock-floor.service" \
+               "$ROOTFS/etc/systemd/system/jetson-clock-floor-save.service" \
+               "$ROOTFS/etc/systemd/system/jetson-clock-floor-save.timer"
+sudo mkdir -p "$ROOTFS/etc/systemd/system/sysinit.target.wants" \
+              "$ROOTFS/etc/systemd/system/timers.target.wants" "$ROOTFS/var/lib"
+sudo ln -sf /etc/systemd/system/jetson-clock-floor.service \
+    "$ROOTFS/etc/systemd/system/sysinit.target.wants/jetson-clock-floor.service"
+sudo ln -sf /etc/systemd/system/jetson-clock-floor-save.timer \
+    "$ROOTFS/etc/systemd/system/timers.target.wants/jetson-clock-floor-save.timer"
+# Seed the floor with the build time so even the very first boot is never 1970.
+date +%s | sudo tee "$ROOTFS/var/lib/clock-floor.epoch" >/dev/null
+echo "   -> clock-floor guard staged (seed $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+
+# =============================================================================
+# WiFi: Intel AX210 (iwlwifi) + legacy RTL8822CE (rtw88) driver load policy
 # =============================================================================
 echo "[*] Baking WiFi driver config + auto-connect profile..."
 # NEVER force-load the wifi driver from modules-load.d: systemd-modules-load
@@ -271,6 +298,42 @@ else
     log_info "No SEED_WIFI_SSID set; skipping WiFi profile staging (none baked)."
 fi
 echo "   -> WiFi auto-connect profile staged: ${WIFI_SSID}"
+
+# Intel AX210 firmware (iwlwifi-ty-a0-gf-a0-*.ucode + .pnvm). The sample rootfs'
+# linux-firmware normally already ships it; verify, and stage from a vendored
+# firmware/iwlwifi/ dir if present. iwlwifi is left to modalias-autoload (an
+# in-tree, well-behaved driver, unlike the RTL vendor blob behind F-10).
+if ls "$ROOTFS"/lib/firmware/iwlwifi-ty-a0-gf-a0-*.ucode >/dev/null 2>&1; then
+    echo "   -> AX210 iwlwifi firmware present in rootfs"
+elif [ -d "$REPO_ROOT/firmware/iwlwifi" ]; then
+    sudo cp "$REPO_ROOT/firmware/iwlwifi/"iwlwifi-ty-* "$ROOTFS/lib/firmware/" 2>/dev/null \
+        && echo "   -> staged AX210 firmware from firmware/iwlwifi/"
+else
+    echo "   [WARN] AX210 iwlwifi-ty firmware not in rootfs; install linux-firmware on"
+    echo "          target or vendor it under firmware/iwlwifi/ (Wi-Fi will not come up)."
+fi
+
+# =============================================================================
+# USB-C device-mode keepawake   stops the tegra-xudc PORTSC=0xffffffff IRQ storm
+# on USB-C connect (see docs/TROUBLESHOOTING.md F-13): keeps the device-mode
+# controller powered so its IRQ handler never reads a gated register. Does NOT
+# affect recovery-mode (bootROM) flashing.
+# =============================================================================
+echo "[*] Baking USB-C keepawake udev rule..."
+sudo install -d -m 0755 "$ROOTFS/etc/udev/rules.d"
+sudo cp "$SCRIPTS/99-tegra-xudc-keepawake.rules" "$ROOTFS/etc/udev/rules.d/99-tegra-xudc-keepawake.rules"
+sudo chmod 644 "$ROOTFS/etc/udev/rules.d/99-tegra-xudc-keepawake.rules"
+
+# =============================================================================
+# On-device operator guide   ships as ~/README.md (frontmatter-stripped mirror
+# of docs/OPERATIONS.md) so the field operator has the cheat-sheet on the box.
+# =============================================================================
+if [ -f "$REPO_ROOT/docs/OPERATIONS.md" ]; then
+    echo "[*] Baking on-device operator README (~/README.md)..."
+    awk 'NR==1&&/^---$/{fm=1;next} fm&&/^---$/{fm=0;next} !fm' \
+        "$REPO_ROOT/docs/OPERATIONS.md" | sudo tee "$TARGET_HOME/README.md" >/dev/null
+    sudo chown 1000:1000 "$TARGET_HOME/README.md" || true
+fi
 
 # =============================================================================
 # Bootloader: RT boot parameters (config-driven)

@@ -45,7 +45,8 @@ for healthy performance baselines.
 [F-10](#f-10-never-force-load-a-hardware-probing-driver-from-modules-loadd) modules-load.d boot hang ·
 [F-11](#f-11-every-boot-lands-in-recovery-boot-and-drops-to-bash-51) every boot drops to `bash-5.1#` ·
 [F-12](#f-12-boot-worked-then-an-in-place-rebuild-mangled-extlinuxconf-multiple-root) in-place rebuild mangled extlinux ·
-[F-13](#f-13-anything-plugged-into-usb-c-storms-the-log-and-wedges-the-console) USB-C storms the console
+[F-13](#f-13-anything-plugged-into-usb-c-storms-the-log-and-wedges-the-console) USB-C storms the console ·
+[F-14](#f-14-intel-ax210-wi-fi-bring-up-iwlwifi-m2-key-e--pcie-c1) AX210 Wi-Fi bring-up
 
 **Vermagic / module loadability**:
 [V-1](#v-1-invalid-module-format-in-dmesg) `Invalid module format` ·
@@ -548,6 +549,35 @@ for healthy performance baselines.
   the handler, or build the port host-only in the DTB/defconfig when device-mode is unused)
   is being confirmed against this unit; this entry will record the verified resolution once
   tested.
+
+### F-14. Intel AX210 Wi-Fi bring-up (iwlwifi, M.2 Key-E / PCIe C1)
+
+- **Card**: the deployed Key-E card is an **Intel AX210** — Wi-Fi `8086:2725` on PCIe C1
+  (`pcie@14100000`), Bluetooth `8087:0032` over USB. This supersedes the RTL8822CE the F-9
+  saga was about; the AX210 BT half enumerates over USB regardless of C1.
+- **Baked support**: `CONFIG_IWLWIFI=m` + `CONFIG_IWLMVM=m`
+  ([01_extract_and_patch.sh](../scripts/01_extract_and_patch.sh)), firmware
+  `iwlwifi-ty-a0-gf-a0-*.ucode` + `.pnvm` staged into the rootfs
+  ([03_bake_rootfs.sh](../scripts/03_bake_rootfs.sh), from `linux-firmware`), and C1 left
+  **enabled** in the DTB. `iwlwifi` modalias-autoloads (no blacklist — it is in-tree and
+  well-behaved, unlike the RTL vendor blob behind F-10).
+- **Requires C1 enabled**: `extlinux.conf` `FDT` must point at a DTB whose `pcie@14100000`
+  is `okay` (NOT a `*c1off*` DTB). Verify: `fdtget /boot/<fdt>.dtb /bus@0/pcie@14100000
+  status` → `okay`. (The C1-off DTB in F-9 is only for *abandoning* Key-E to reclaim the
+  ~40 s link-wait; with the AX210 in use, keep C1 on.)
+- **Bring-up / check**:
+  ```bash
+  lspci -d 8086:                       # AX210 present (8086:2725) on bus 0001
+  sudo dmesg | grep -iE 'iwlwifi|14100000'   # fw load; want "Link up", not "Phy link never came up"
+  nmcli dev status                     # wlan0 present
+  nmcli dev wifi connect "<SSID>" password "<PASS>"
+  ```
+- **If `wlan0` never appears**: confirm the FDT is C1-enabled; then
+  `sudo dmesg | grep 14100000`. `Phy link never came up` is the C1 link symptom from F-9
+  (a board/slot fault with two *RTL* cards) — **re-test with the AX210 before concluding**:
+  the Metis "hardware" theory turned out to be a software clock bug (H-13), so don't assume
+  the slot is dead until the AX210 itself fails to train. If `iwlwifi` loads but no
+  firmware, ensure `iwlwifi-ty-*` is in `/lib/firmware` (`sudo apt install linux-firmware`).
 
 ## Vermagic / module loadability
 

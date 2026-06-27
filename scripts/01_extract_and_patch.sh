@@ -168,6 +168,19 @@ CONFIG_RTW88_8822C=m
 CONFIG_RTW88_8822CE=m
 
 # =============================================================
+# AV KERNEL: Wi-Fi   Intel AX210 (M.2 Key E, iwlwifi)
+# The deployed Key-E card is an Intel AX210: WiFi (8086:2725) on PCIe C1
+# (pcie@14100000), Bluetooth (8087:0032) over USB. iwlwifi + the MVM op-mode
+# over the cfg80211/mac80211 enabled above. Firmware (iwlwifi-ty-a0-gf-a0-*.ucode
+# + .pnvm) is NOT in-kernel; it is staged into the rootfs at bake from
+# linux-firmware (see 03_bake_rootfs.sh). C1 must stay enabled in the DTB.
+# =============================================================
+CONFIG_WLAN_VENDOR_INTEL=y
+CONFIG_IWLWIFI=m
+CONFIG_IWLMVM=m
+CONFIG_IWLWIFI_LEDS=y
+
+# =============================================================
 # AV KERNEL: PCIe ASPM   stock parity in code (=y); the Axelera
 # sub-microsecond wake policy is enforced at runtime via the
 # pcie_aspm=off kernel cmdline arg (see versions.env RT_BOOT_ARGS).

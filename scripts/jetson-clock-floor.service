@@ -1,0 +1,15 @@
+[Unit]
+Description=Floor system clock to known-good time (Metis/Voyager 1970-clock guard)
+Documentation=https://github.com/silicondoritos/jetson-rt-stack/blob/main/docs/TROUBLESHOOTING.md
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=sysinit.target time-set.target
+ConditionPathExists=/var/lib/clock-floor.epoch
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/jetson_clock_floor.sh apply
+
+[Install]
+WantedBy=sysinit.target

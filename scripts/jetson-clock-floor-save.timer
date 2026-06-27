@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically persist clock floor (Metis/Voyager 1970-clock guard)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
